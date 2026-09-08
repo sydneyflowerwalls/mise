@@ -12,13 +12,32 @@ the weekly plan is checked on a phone in the kitchen. Desktop is secondary.
 
 Requires Node 22+ and a Postgres database (Supabase free tier is fine).
 
+### Local Postgres (development)
+
 ```bash
 npm install                  # also runs `prisma generate` via postinstall
-cp .env.example .env         # then fill in DATABASE_URL and DIRECT_URL
+docker compose up -d         # Postgres on :5432, data in a named volume
+cp .env.local.example .env   # connection strings already filled in
 npm run db:push              # create the tables
 npm run db:seed              # 140 canonical ingredients, 249 alias keys
 npm run dev                  # http://localhost:3000
 ```
+
+`docker compose down` stops the database and keeps the data. `docker compose
+down -v` deletes the data too.
+
+### Supabase (when moving off this machine)
+
+Same steps, but instead of `docker compose up`, copy `.env.example` to `.env`
+and fill in the two Supabase connection strings — the transaction pooler
+(port 6543, with `?pgbouncer=true`) for `DATABASE_URL`, and the direct
+connection (port 5432) for `DIRECT_URL`. `.env.example` explains which is
+which.
+
+**On Windows, create `.env` in your editor, not with `>` in PowerShell.**
+Windows PowerShell 5.1 writes UTF-16 when you redirect to a file, and the
+dotenv parser reads that as garbage — you get "Environment variable not found"
+even though the file plainly contains it.
 
 **Use `.env`, not `.env.local`.** Next.js reads both, but the Prisma CLI only
 reads `.env` — put the connection strings in `.env.local` and `db:push` will
