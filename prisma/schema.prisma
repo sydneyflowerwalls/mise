@@ -1,0 +1,373 @@
+// mise — household meal planner
+//
+// Design notes that matter:
+//  * All quantities are Decimal (Postgres NUMERIC), never Float. This schema
+//    stores halves and thirds of cups and scales them by 1.5x. Float drift
+//    surfaces as "0.30000000000000004 kg beef" on a shopping list.
+//  * Tag facets are enums, not free strings, so "asian" / "Asian" / "East
+//    Asian" cannot become three different things (product brief §3).
+//  * IngredientAlias is a write-through cache: the first sighting of a raw
+//    ingredient string may cost a Claude call, every sighting after that is a
+//    database lookup (integration brief §6, rule 1).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums — the fixed tag vocabularies
+// ---------------------------------------------------------------------------
+
+enum RecipeStatus {
+  NEW
+  FAVOURITE
+  DISLIKED
+  FILED
+}
+
+enum Cuisine {
+  ITALIAN
+  ASIAN
+  MEXICAN
+  INDIAN
+  MIDDLE_EASTERN
+  AUSTRALIAN_BRITISH
+  OTHER
+}
+
+enum Protein {
+  CHICKEN
+  BEEF
+  PORK
+  LAMB
+  FISH
+  SEAFOOD
+  VEGETARIAN
+  VEGAN
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+  DESSERT
+}
+
+enum SourceType {
+  URL
+  BOOK
+  OWN
+  TEXT
+}
+
+/// Origin matters for unit conversion: an Australian tablespoon is 20ml, but
+/// an imported US or UK recipe means 15ml. Getting this wrong is a silent
+/// one-third error on every tablespoon (product brief §6.2).
+enum OriginCountry {
+  AU
+  US
+  UK
+  OTHER
+}
+
+enum Aisle {
+  PRODUCE
+  MEAT_SEAFOOD
+  DELI
+  DAIRY_EGGS
+  BAKERY
+  PANTRY
+  FREEZER
+  DRINKS
+  HOUSEHOLD
+  OTHER
+}
+
+/// Families cannot be summed across. 200g + 300g onion is 500g; "2 onions" +
+/// "150g onion" is not a single number and must be shown as both.
+enum UnitFamily {
+  MASS
+  VOLUME
+  COUNT
+  IMPRECISE
+}
+
+enum DayOfWeek {
+  SUN
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+}
+
+enum MealSlot {
+  BREAKFAST
+  LUNCH
+  DINNER
+}
+
+enum WeekStatus {
+  CURRENT
+  NEXT
+  ARCHIVED
+}
+
+enum PantryLocation {
+  PANTRY
+  FRIDGE
+  FREEZER
+  SPICE_RACK
+}
+
+// ---------------------------------------------------------------------------
+// Recipes
+// ---------------------------------------------------------------------------
+
+model Recipe {
+  id          String        @id @default(cuid())
+  title       String
+  author      String?
+  sourceType  SourceType    @default(OWN)
+  sourceUrl   String?
+  serves      Int           @default(4)
+  prepMinutes Int?
+  cookMinutes Int?
+  photoUrl    String?
+  notes       String?
+  method      String[]      @default([])
+  status      RecipeStatus  @default(NEW)
+  origin      OriginCountry @default(AU)
+
+  cuisine  Cuisine?
+  protein  Protein?
+  mealTypes MealType[]     @default([])
+  freeTags String[]        @default([])
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastCookedAt DateTime?
+  timesCooked  Int       @default(0)
+
+  ingredients  RecipeIngredient[]
+  plannedMeals PlannedMeal[]
+
+  /// Normalised title for duplicate detection (product brief §4.5). Populated
+  /// in code; pg_trgm similarity() runs against this, not the display title.
+  titleKey String
+
+  @@index([status])
+  @@index([sourceUrl])
+  @@index([titleKey])
+}
+
+model RecipeIngredient {
+  id       String @id @default(cuid())
+  recipeId String
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  position Int
+
+  /// Exactly as written in the source, kept verbatim so the recipe view can
+  /// show the original line and so re-parsing later is possible.
+  rawText String
+
+  quantity Decimal? @db.Decimal(12, 4)
+  unit     String?
+  note     String?
+
+  canonicalIngredientId String?
+  canonicalIngredient   CanonicalIngredient? @relation(fields: [canonicalIngredientId], references: [id])
+
+  @@unique([recipeId, position])
+  @@index([canonicalIngredientId])
+}
+
+// ---------------------------------------------------------------------------
+// Canonical ingredients — the lookup table behind everything
+// ---------------------------------------------------------------------------
+
+model CanonicalIngredient {
+  id   String @id @default(cuid())
+  name String @unique
+
+  aisle Aisle @default(OTHER)
+
+  /// Salt, pepper, olive oil, "for frying". Never summed, rendered as a plain
+  /// check-item, and suppressed entirely when the pantry has them (§6.2 step 4).
+  isImprecise Boolean @default(false)
+
+  /// Grams per single item, where a sensible average exists (1 onion ~= 150g).
+  /// Enables an advisory "2 whole + 150g" -> approximate total. Never used to
+  /// silently collapse count into mass on the list itself.
+  gramsPerUnit Decimal? @db.Decimal(10, 2)
+
+  aliases           IngredientAlias[]
+  recipeIngredients RecipeIngredient[]
+  shoppingItems     ShoppingListItem[]
+  pantryItems       PantryItem[]
+
+  @@index([aisle])
+}
+
+/// The write-through cache. "brown onion", "onions", "1 onion, diced" all land
+/// here pointing at the same canonical row. Never resolve the same raw string
+/// twice (integration brief §6, rule 1).
+model IngredientAlias {
+  id  String @id @default(cuid())
+  /// Lowercased, punctuation-stripped, singularised lookup key.
+  key String @unique
+
+  canonicalIngredientId String
+  canonicalIngredient   CanonicalIngredient @relation(fields: [canonicalIngredientId], references: [id], onDelete: Cascade)
+
+  /// How this mapping was made, so low-confidence ones can be reviewed.
+  source    String   @default("seed") // seed | claude | user
+  createdAt DateTime @default(now())
+
+  @@index([canonicalIngredientId])
+}
+
+// ---------------------------------------------------------------------------
+// Weekly plan
+// ---------------------------------------------------------------------------
+
+model Week {
+  /// Always the Sunday that starts the week, at 00:00 local.
+  startDate DateTime   @id @db.Date
+  status    WeekStatus @default(NEXT)
+
+  meals        PlannedMeal[]
+  shoppingList ShoppingList?
+
+  @@index([status])
+}
+
+model PlannedMeal {
+  id        String   @id @default(cuid())
+  weekStart DateTime @db.Date
+  week      Week     @relation(fields: [weekStart], references: [startDate], onDelete: Cascade)
+
+  day  DayOfWeek
+  slot MealSlot
+
+  /// Either a recipe reference or a free-text entry ("leftovers", "takeaway",
+  /// "out for dinner"). Half the slots in a real week are not recipes, and an
+  /// app that cannot represent "toast" starts feeling like homework.
+  recipeId String?
+  recipe   Recipe? @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  freeText String?
+
+  servings Int @default(2)
+
+  /// Set when this dinner is cooked double to fill the next day's lunch. The
+  /// generated lunch slot points back here and contributes no shopping.
+  leftoversForId String?      @unique
+  leftoversFor   PlannedMeal? @relation("Leftovers", fields: [leftoversForId], references: [id], onDelete: SetNull)
+  leftoverChild  PlannedMeal? @relation("Leftovers")
+
+  cookedAt DateTime?
+
+  shoppingSources ShoppingItemSource[]
+
+  @@unique([weekStart, day, slot])
+  @@index([recipeId])
+}
+
+// ---------------------------------------------------------------------------
+// Shopping list
+// ---------------------------------------------------------------------------
+
+model ShoppingList {
+  id        String   @id @default(cuid())
+  weekStart DateTime @unique @db.Date
+  week      Week     @relation(fields: [weekStart], references: [startDate], onDelete: Cascade)
+
+  items ShoppingListItem[]
+}
+
+model ShoppingListItem {
+  id     String       @id @default(cuid())
+  listId String
+  list   ShoppingList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  canonicalIngredientId String?
+  canonicalIngredient   CanonicalIngredient? @relation(fields: [canonicalIngredientId], references: [id])
+
+  /// What the shopper actually reads. For a split-family item this is the
+  /// heading ("Onion") and the quantities live in the amounts below.
+  displayName String
+
+  /// One row per unit family that survived consolidation. An item needing both
+  /// "2 whole" and "150g" carries two amounts and renders as "2 whole + 150g".
+  amounts ShoppingAmount[]
+
+  aisle Aisle @default(OTHER)
+
+  checked   Boolean @default(false)
+  /// Manual items (milk, bin bags, coffee) survive plan changes; generated
+  /// items are removed when their meal leaves the plan.
+  isManual  Boolean @default(false)
+  /// Struck through as "have it" rather than hidden, so a distrusted pantry
+  /// count can be overridden in the aisle (product brief §7.2).
+  haveInPantry Boolean @default(false)
+
+  sortOrder Int @default(0)
+
+  sources ShoppingItemSource[]
+
+  @@index([listId, aisle])
+}
+
+model ShoppingAmount {
+  id     String           @id @default(cuid())
+  itemId String
+  item   ShoppingListItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  family   UnitFamily
+  quantity Decimal    @db.Decimal(12, 4)
+  /// Display unit chosen at render time (500g vs 1.5kg); base unit is grams
+  /// for MASS, millilitres for VOLUME, and the counted noun for COUNT.
+  unit     String
+
+  @@index([itemId])
+}
+
+/// Why a line is on the list — "shows which meal(s) it came from" (§6.1).
+model ShoppingItemSource {
+  itemId        String
+  item          ShoppingListItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  plannedMealId String
+  plannedMeal   PlannedMeal      @relation(fields: [plannedMealId], references: [id], onDelete: Cascade)
+
+  @@id([itemId, plannedMealId])
+}
+
+// ---------------------------------------------------------------------------
+// Pantry (phase 3 — schema present so it needs no migration later)
+// ---------------------------------------------------------------------------
+
+model PantryItem {
+  id String @id @default(cuid())
+
+  canonicalIngredientId String
+  canonicalIngredient   CanonicalIngredient @relation(fields: [canonicalIngredientId], references: [id], onDelete: Cascade)
+
+  quantity Decimal?       @db.Decimal(12, 4)
+  unit     String?
+  location PantryLocation @default(PANTRY)
+  expiresAt DateTime?     @db.Date
+
+  updatedAt DateTime @updatedAt
+
+  @@index([canonicalIngredientId])
+  @@index([expiresAt])
+}

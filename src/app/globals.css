@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Kawaii Pastel Pop — design tokens
+   ---------------------------------------------------------------------------
+   One deliberate override from the supplied spec: the front matter defines
+   button-primary as primary (#FFD1DC) fill with neutral (#B3E5FC) text, which
+   measures ~1.1:1 contrast and is unreadable. The prose section of the same
+   spec says "Primary Button: Accent color fill", so that is what is built:
+   accent #9D84B6 with charcoal #222 text, measuring 4.85:1 (passes AA).
+   This list gets read one-handed under supermarket lighting; legibility wins.
+--------------------------------------------------------------------------- */
+
+@theme {
+  /* Palette */
+  --color-blush: #ffd1dc;      /* primary background surface */
+  --color-ink: #222222;        /* text — never pure black */
+  --color-ink-soft: #5c4a55;   /* secondary text */
+  --color-lilac: #9d84b6;      /* accent: CTAs, interactive, active states */
+  --color-lilac-deep: #7c6695;  /* darker accent, for accent-coloured text */
+  --color-sky: #b3e5fc;        /* secondary accent */
+  --color-cream: #fff9c4;      /* secondary surface — cards */
+  --color-mint: #b9f6ca;       /* decorative */
+  --color-cloud: #fffdfa;      /* raised surface where cream is too warm */
+
+  /* Corners — generous, per the spec's rounded scale */
+  --radius-sm: 20px;
+  --radius-md: 40px;
+  --radius-lg: 60px;
+
+  /* Type */
+  --font-display: var(--font-varela), ui-rounded, "Hiragino Maru Gothic ProN",
+    "Segoe UI", system-ui, sans-serif;
+  --font-sans: var(--font-varela), ui-rounded, "Segoe UI", system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Coloured shadows — every shadow in this system is tinted, never grey */
+  --shadow-soft: 0 2px 12px rgba(157, 132, 182, 0.14);
+  --shadow-lift: 0 8px 24px rgba(157, 132, 182, 0.22);
+  --shadow-press: 0 1px 4px rgba(157, 132, 182, 0.2);
+
+  /* Motion — ease-out, 200-300ms, transform and opacity only */
+  --ease-pop: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-blush);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.6;
+    /* Never h-screen — dvh accounts for the iOS URL bar. */
+    min-height: 100dvh;
+    /* Decorative wash: soft airbrushed gradient, no image dependency. */
+    background-image:
+      radial-gradient(60rem 40rem at 110% -10%, rgba(179, 229, 252, 0.55), transparent 60%),
+      radial-gradient(50rem 34rem at -20% 8%, rgba(185, 246, 202, 0.42), transparent 62%),
+      radial-gradient(40rem 30rem at 50% 108%, rgba(255, 249, 196, 0.6), transparent 60%);
+    background-attachment: fixed;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+  }
+
+  /* Focus is visible and on-palette, never removed. */
+  :focus-visible {
+    outline: 2px solid var(--color-lilac);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  /* Tap targets on a phone in a supermarket: generous, no 300ms delay. */
+  button, a, input, select, textarea {
+    touch-action: manipulation;
+  }
+}
+
+@layer components {
+  /* Entry animation: fade + 16px rise over 420ms, staggered 80ms for lists. */
+  .rise-in {
+    animation: rise-in 420ms var(--ease-pop) both;
+  }
+
+  @keyframes rise-in {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Shimmer for skeletons — never a circular spinner, per the spec. */
+  .shimmer {
+    background: linear-gradient(
+      100deg,
+      rgba(255, 255, 255, 0.1) 30%,
+      rgba(255, 255, 255, 0.65) 50%,
+      rgba(255, 255, 255, 0.1) 70%
+    );
+    background-size: 220% 100%;
+    animation: shimmer 1.4s linear infinite;
+  }
+
+  @keyframes shimmer {
+    to { background-position: -220% 0; }
+  }
+
+  /* Bottom nav must clear the iPhone home indicator. */
+  .safe-bottom {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+  .safe-top {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
