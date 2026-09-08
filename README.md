@@ -13,12 +13,22 @@ the weekly plan is checked on a phone in the kitchen. Desktop is secondary.
 Requires Node 22+ and a Postgres database (Supabase free tier is fine).
 
 ```bash
-npm install
-cp .env.example .env.local     # fill in DATABASE_URL and DIRECT_URL
-npm run db:push                # create the tables
-npm run db:seed                # 140 canonical ingredients, 249 alias keys
-npm run dev                    # http://localhost:3000
+npm install                  # also runs `prisma generate` via postinstall
+cp .env.example .env         # then fill in DATABASE_URL and DIRECT_URL
+npm run db:push              # create the tables
+npm run db:seed              # 140 canonical ingredients, 249 alias keys
+npm run dev                  # http://localhost:3000
 ```
+
+**Use `.env`, not `.env.local`.** Next.js reads both, but the Prisma CLI only
+reads `.env` — put the connection strings in `.env.local` and `db:push` will
+report `Environment variable not found: DATABASE_URL` while the app itself
+works. One `.env` file avoids the split. It is gitignored.
+
+If you ever see *"@prisma/client did not initialize yet"*, the generated
+client is missing — run `npx prisma generate`. `postinstall` normally handles
+this, but it is skipped by `npm ci --ignore-scripts` and by some corporate npm
+configs.
 
 For your wife's actual use, run a production build — `next dev` recompiles on
 every navigation and is noticeably slow on a phone:
@@ -53,8 +63,8 @@ A healthy response reports `"status": "ok"` and, importantly,
 `"meteredBillingActive": false`. **If that field is ever `true`,
 `ANTHROPIC_API_KEY` has leaked into the environment and calls are being billed
 per token instead of using the subscription.** Not even a blank
-`ANTHROPIC_API_KEY=` line belongs in `.env.local` — an empty string still
-shadows the OAuth credentials.
+`ANTHROPIC_API_KEY=` line belongs in `.env` — an empty string still shadows
+the OAuth credentials.
 
 ## Access from her phone
 

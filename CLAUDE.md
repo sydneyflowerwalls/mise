@@ -48,6 +48,8 @@ a silent failure. Auth problems say so specifically and name the fix.
 - `min-h-[100dvh]`, never `h-screen`.
 - No emoji in UI — Lucide icons only. No pure black; charcoal `#222`.
 - Run `npm test && npm run typecheck` before committing.
+- Environment variables go in `.env`, never `.env.local` — the Prisma CLI
+  reads only `.env`, so a split leaves `db:push` and `db:seed` blind.
 
 ## Design system
 
