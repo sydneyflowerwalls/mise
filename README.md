@@ -26,6 +26,23 @@ npm run dev                  # http://localhost:3000
 `docker compose down` stops the database and keeps the data. `docker compose
 down -v` deletes the data too.
 
+### Local Postgres without Docker
+
+If Docker isn't installed and you don't otherwise want it, the native Windows
+installer from postgresql.org is smaller and needs no reboot. During setup keep
+port 5432 and set a superuser password; you can skip Stack Builder at the end.
+
+Then create a role and database matching `.env.local.example`, so the
+connection strings work unchanged and switching to Docker later needs no edit.
+In **SQL Shell (psql)**, logged in as `postgres`:
+
+```sql
+CREATE USER mise WITH PASSWORD 'mise';
+CREATE DATABASE mise OWNER mise;
+```
+
+From there `npm run db:push` and `npm run db:seed` are identical.
+
 ### Supabase (when moving off this machine)
 
 Same steps, but instead of `docker compose up`, copy `.env.example` to `.env`
